@@ -1,0 +1,23 @@
+# oh girl, i love ast-grep
+
+id: za-warudo
+language: Javascript
+rule:
+  pattern:
+    selector: array
+    context: "{[$$$A]}"
+  inside:
+    kind: pair
+    has:
+      field: key
+      regex: ^makers$
+fix: |
+  [{
+    name: '@electron-forge/maker-rpm',
+    platforms: ['linux'],
+  },
+  {
+    name: '@electron-forge/maker-deb',
+    platforms: ['linux'],
+  },
+  $$$A]

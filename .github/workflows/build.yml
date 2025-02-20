@@ -1,0 +1,118 @@
+name: CI
+
+on:
+  workflow_dispatch:
+
+# I would be in serious trouble if logseq changes their workflow and requirements
+env:
+  CLOJURE_VERSION: "1.11.1.1413"
+  JAVA_VERSION: "11"
+  NODE_VERSION: "20"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update && \
+          sudo apt-get install -y wget curl ca-certificates zip unzip && \
+          sudo apt-get install -y rpm fakeroot
+
+      - name: Clone Logseq
+        run: git clone https://github.com/logseq/logseq.git
+
+      - name: Get latest git tag
+        id: version
+        run: |
+          git fetch --tags
+          echo "VERSION=$(git describe --tags --abbrev=0)" >> $GITHUB_ENV
+        working-directory: logseq
+
+      - name: Set up Node
+        uses: actions/setup-node@v3
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "yarn"
+          cache-dependency-path: |
+            logseq/yarn.lock
+            logseq/static/yarn.lock
+
+      - name: Set up Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: "zulu"
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Set up Clojure
+        uses: DeLaGuardo/setup-clojure@10.1
+        with:
+          cli: ${{ env.CLOJURE_VERSION }}
+
+      - name: Clojure cache
+        uses: actions/cache@v3
+        id: clojure-deps
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+          key: ${{ runner.os }}-clojure-deps-${{ hashFiles('deps.edn') }}
+          restore-keys: ${{ runner.os }}-clojure-deps-
+
+      - name: Fetch Clojure deps
+        if: steps.clojure-deps.outputs.cache-hit != 'true'
+        run: clojure -A:cljs -P
+
+      - name: Shadow-cljs cache
+        uses: actions/cache@v3
+        with:
+          path: .shadow-cljs
+          key: ${{ runner.os }}-shadow-cljs-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-shadow-cljs-
+
+      - name: Fetch yarn deps
+        run: |
+          yarn install
+          cd static
+          yarn install
+        working-directory: logseq
+
+      - name: Install ast-grep-cli
+        run: npm install @ast-grep/cli -g
+
+      - name: Modify Electron Forge configuration
+        run: ast-grep scan -r sg-rule.yml -U logseq/resources/forge.config.js
+
+      - name: Install deb and rpm forge makers
+        run: yarn add @electron-forge/maker-rpm @electron-forge/maker-deb --dev
+        working-directory: logseq
+
+      - name: Build deb and rpm
+        run: yarn release-electron
+        working-directory: logseq
+
+      - name: Upload DEB
+        uses: actions/upload-artifact@v4
+        with:
+          name: logseq-${{ env.VERSION }}-deb
+          path: logseq/static/out/make/deb/x64/*.deb
+      - name: Upload RPM
+        uses: actions/upload-artifact@v4
+        with:
+          name: logseq-${{ env.VERSION }}-rpm
+          path: logseq/static/out/make/rpm/x64/*.rpm
+      - name: Upload ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: logseq-${{ env.VERSION }}-zip
+          path: logseq/static/out/make/zip/linux/x64/*.zip
+      - name: Upload AppImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: logseq-${{ env.VERSION }}-appimage
+          path: logseq/static/out/make/*.AppImage
